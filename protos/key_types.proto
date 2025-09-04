@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package bagz_index.keys;
+
+message StringKey {
+    string value = 1;
+}
+
+message Int64Key {
+    int64 value = 1;
+}
+
+message TupleStringKey {
+    repeated string value = 1;
+}

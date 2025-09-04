@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+message HashRecord {
+    bytes key = 1;
+    repeated int64 record_ids = 2;
+}
+
+message HashBucket {
+    repeated HashRecord records = 1;
+}
+
+message PostingList {
+    repeated int64 record_ids = 1;
+    repeated uint64 record_offsets = 2;
+}
