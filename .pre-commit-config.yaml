@@ -43,5 +43,6 @@ repos:
             --ignore-missing-imports,
             --install-types,
             --non-interactive,
+            --exclude="/.*_pb2.py$",
           ]
         additional_dependencies: [types-PyYAML==6.0.4, types-toml]

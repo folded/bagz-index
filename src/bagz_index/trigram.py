@@ -87,8 +87,81 @@ class TrigramMerger(core.IndexMerger):
   def __init__(self, config: TrigramConfig) -> None:
     self._config = config
 
+  def _merge_with_positions(
+    self,
+    postings_to_merge: list[messages_pb2.PostingList],
+  ) -> messages_pb2.PostingList:
+    all_tuples = []
+    for pl in postings_to_merge:
+      all_tuples.extend(zip(pl.record_ids, pl.record_offsets, strict=True))
+
+    all_tuples.sort()
+
+    # Deduplicate using itertools.groupby
+    unique_tuples = [k for k, _ in itertools.groupby(all_tuples)]
+
+    record_ids = [t[0] for t in unique_tuples]
+    merged_pl = messages_pb2.PostingList(
+      record_ids=record_ids,
+      record_offsets=[t[1] for t in unique_tuples],
+    )
+    if self._config.delta_encode_record_ids:
+      _delta_encode(merged_pl)
+    return merged_pl
+
+  def _merge_without_positions(
+    self,
+    postings_to_merge: list[messages_pb2.PostingList],
+  ) -> messages_pb2.PostingList:
+    all_record_ids = set()
+    for pl in postings_to_merge:
+      all_record_ids.update(pl.record_ids)
+
+    record_ids = sorted(all_record_ids)
+    merged_pl = messages_pb2.PostingList(
+      record_ids=record_ids,
+    )
+    if self._config.delta_encode_record_ids:
+      _delta_encode(merged_pl)
+    return merged_pl
+
+  def _merge_trigram(
+    self,
+    i: int,
+    readers: list[bagz.Reader],
+    writer: bagz.Writer,
+  ) -> None:
+    postings_to_merge = []
+    for r in readers:
+      data = r[i]
+      if data:
+        pl = messages_pb2.PostingList()
+        pl.ParseFromString(data)
+        postings_to_merge.append(pl)
+
+    if not postings_to_merge:
+      writer.write(b"")
+      return
+
+    if len(postings_to_merge) == 1:
+      writer.write(postings_to_merge[0].SerializeToString())
+      return
+
+    if self._config.delta_encode_record_ids:
+      for pl in postings_to_merge:
+        _delta_decode(pl)
+
+    if self._config.store_positions:
+      merged_pl = self._merge_with_positions(postings_to_merge)
+    else:
+      merged_pl = self._merge_without_positions(postings_to_merge)
+
+    writer.write(merged_pl.SerializeToString())
+
   def __call__(
-    self, input_bagz_paths: list[str], output_bagz_path: str | pathlib.Path,
+    self,
+    input_bagz_paths: list[str],
+    output_bagz_path: str | pathlib.Path,
   ) -> None:
     readers = [bagz.Reader(p) for p in input_bagz_paths]
     with bagz.Writer(output_bagz_path) as writer:
@@ -98,56 +171,7 @@ class TrigramMerger(core.IndexMerger):
 
       num_postings = len(readers[0]) - 1
       for i in range(num_postings):
-        postings_to_merge = []
-        for r in readers:
-          data = r[i]
-          if data:
-            pl = messages_pb2.PostingList()
-            pl.ParseFromString(data)
-            postings_to_merge.append(pl)
-
-        if not postings_to_merge:
-          writer.write(b"")
-          continue
-
-        if len(postings_to_merge) == 1:
-          writer.write(postings_to_merge[0].SerializeToString())
-          continue
-
-        if self._config.delta_encode_record_ids:
-          for pl in postings_to_merge:
-            _delta_decode(pl)
-
-        if self._config.store_positions:
-          all_tuples = []
-          for pl in postings_to_merge:
-            all_tuples.extend(zip(pl.record_ids, pl.record_offsets, strict=True))
-
-          all_tuples.sort()
-
-          # Deduplicate using itertools.groupby
-          unique_tuples = [k for k, _ in itertools.groupby(all_tuples)]
-
-          record_ids = [t[0] for t in unique_tuples]
-          merged_pl = messages_pb2.PostingList(
-            record_ids=record_ids,
-            record_offsets=[t[1] for t in unique_tuples],
-          )
-          if self._config.delta_encode_record_ids:
-            _delta_encode(merged_pl)
-        else:
-          all_record_ids = set()
-          for pl in postings_to_merge:
-            all_record_ids.update(pl.record_ids)
-
-          record_ids = sorted(all_record_ids)
-          merged_pl = messages_pb2.PostingList(
-            record_ids=record_ids,
-          )
-          if self._config.delta_encode_record_ids:
-            _delta_encode(merged_pl)
-
-        writer.write(merged_pl.SerializeToString())
+        self._merge_trigram(i, readers, writer)
 
       writer.write(self._config.to_json().encode("utf-8"))
 

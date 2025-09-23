@@ -144,41 +144,42 @@ def test_index_reader_lookup(
     key_message = key_proto_class(value=key)
     assert reader.lookup(key_message) == expected_record_ids
 
+
 def test_hashtable_merge(
-    tmp_path: pathlib.Path,
-    key_lookup_config: core.KeyConfig,
-    key_type_expectations: KeyTypeExpectations,
+  tmp_path: pathlib.Path,
+  key_lookup_config: core.KeyConfig,
+  key_type_expectations: KeyTypeExpectations,
 ) -> None:
-    # Create two indices from key_values
-    all_key_values = list(key_type_expectations.key_values)
+  # Create two indices from key_values
+  all_key_values = list(key_type_expectations.key_values)
 
-    # Index 1
-    writer1 = core.make_writer(key_lookup_config, core.SupportsKeyAddition)
-    key_proto_class1 = writer1.key_proto
-    key_values1 = all_key_values[:len(all_key_values)//2]
-    for record_ids, key_value in key_values1:
-        key = key_proto_class1(**key_value)
-        writer1.add(key, record_ids)
-    bagz_path1 = tmp_path / "test1.bagz"
-    writer1.write(str(bagz_path1))
+  # Index 1
+  writer1 = core.make_writer(key_lookup_config, core.SupportsKeyAddition)
+  key_proto_class1 = writer1.key_proto
+  key_values1 = all_key_values[: len(all_key_values) // 2]
+  for record_ids, key_value in key_values1:
+    key = key_proto_class1(**key_value)
+    writer1.add(key, record_ids)
+  bagz_path1 = tmp_path / "test1.bagz"
+  writer1.write(str(bagz_path1))
 
-    # Index 2
-    writer2 = core.make_writer(key_lookup_config, core.SupportsKeyAddition)
-    key_proto_class2 = writer2.key_proto
-    key_values2 = all_key_values[len(all_key_values)//2:]
-    for record_ids, key_value in key_values2:
-        key = key_proto_class2(**key_value)
-        writer2.add(key, record_ids)
-    bagz_path2 = tmp_path / "test2.bagz"
-    writer2.write(str(bagz_path2))
+  # Index 2
+  writer2 = core.make_writer(key_lookup_config, core.SupportsKeyAddition)
+  key_proto_class2 = writer2.key_proto
+  key_values2 = all_key_values[len(all_key_values) // 2 :]
+  for record_ids, key_value in key_values2:
+    key = key_proto_class2(**key_value)
+    writer2.add(key, record_ids)
+  bagz_path2 = tmp_path / "test2.bagz"
+  writer2.write(str(bagz_path2))
 
-    # Merge them
-    merged_path = tmp_path / "merged.bagz"
-    core.merge_indices([str(bagz_path1), str(bagz_path2)], str(merged_path))
+  # Merge them
+  merged_path = tmp_path / "merged.bagz"
+  core.merge_indices([str(bagz_path1), str(bagz_path2)], str(merged_path))
 
-    # Test the merged index
-    reader = core.make_reader(str(merged_path), core.SupportsKeyLookup)
-    key_proto_class = reader.key_proto
-    for key, expected_record_ids in key_type_expectations.lookup_expectations:
-        key_message = key_proto_class(value=key)
-        assert reader.lookup(key_message) == expected_record_ids
+  # Test the merged index
+  reader = core.make_reader(str(merged_path), core.SupportsKeyLookup)
+  key_proto_class = reader.key_proto
+  for key, expected_record_ids in key_type_expectations.lookup_expectations:
+    key_message = key_proto_class(value=key)
+    assert reader.lookup(key_message) == expected_record_ids

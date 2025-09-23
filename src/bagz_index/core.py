@@ -18,13 +18,11 @@ class IndexReader(Protocol):
 
 
 class IndexWriter(Protocol):
-  def write(self, bagz_path: str | pathlib.Path) -> None:
-    ...
+  def write(self, bagz_path: str | pathlib.Path) -> None: ...
 
 
 class IndexMerger(Protocol):
-  def __call__(self, input_bagz_paths: list[str], output_bagz_path: str) -> None:
-    ...
+  def __call__(self, input_bagz_paths: list[str], output_bagz_path: str) -> None: ...
 
 
 class SupportsKeyLookup(IndexReader, Protocol):
@@ -145,8 +143,7 @@ def make_writer(config: Config, expected_protocol: type[T]) -> T:
       f"Index writer of type '{type(config).__name__}' "
       f"does not support the '{expected_protocol.__name__}' protocol.",
     )
-  writer = config.make_writer()
-  return writer # type: ignore[return-value]
+  return config.make_writer()  # type: ignore[return-value]
 
 
 def make_reader(bagz_path: str, expected_protocol: type[T]) -> T:
@@ -157,8 +154,8 @@ def make_reader(bagz_path: str, expected_protocol: type[T]) -> T:
       f"Index reader of type '{type(config).__name__}' "
       f"does not support the '{expected_protocol.__name__}' protocol.",
     )
-  index_reader = config.make_reader(reader)
-  return index_reader # type: ignore[return-value]
+  return config.make_reader(reader)  # type: ignore[return-value]
+
 
 def _config_from_bagz(bagz_path: str) -> Config:
   reader = bagz.Reader(bagz_path)

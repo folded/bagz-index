@@ -41,7 +41,9 @@ def delta_trigram_config() -> trigram.TrigramConfig:
 
 
 def _build_index(
-  tmp_path: pathlib.Path, name: str, config: trigram.TrigramConfig,
+  tmp_path: pathlib.Path,
+  name: str,
+  config: trigram.TrigramConfig,
 ) -> pathlib.Path:
   writer = core.make_writer(config, core.SupportsTextAddition)
   for i, doc in enumerate(_TEST_DOCS):
@@ -53,7 +55,8 @@ def _build_index(
 
 
 def _test_searches(
-  config: trigram.TrigramConfig, reader: core.SupportsTextSearch,
+  config: trigram.TrigramConfig,
+  reader: core.SupportsTextSearch,
 ) -> None:
   results = reader.search("search")
   if config.store_positions:
@@ -92,8 +95,7 @@ def test_normalize_text() -> None:
   assert trigram._normalize_text("no-punctuation", compiled_regex) == "no punctuation"
 
 
-def test_ngram_to_index(
-) -> None:
+def test_ngram_to_index() -> None:
   # Test standard config
   config = trigram_config()
   assert trigram.get_ngram_index("aaa", config) == 0
@@ -119,7 +121,9 @@ def test_ngram_to_index(
   ],
 )
 def test_trigram_search_simple(
-  tmp_path: pathlib.Path, name: str, config: trigram.TrigramConfig,
+  tmp_path: pathlib.Path,
+  name: str,
+  config: trigram.TrigramConfig,
 ) -> None:
   path = _build_index(tmp_path, name, config)
   reader = core.make_reader(str(path), core.SupportsTextSearch)

@@ -68,3 +68,4 @@ known-first-party = ["src"]
 
 [tool.mypy]
 ignore_missing_imports = true
+exclude = "^.*_pb2.py$"

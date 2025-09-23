@@ -27,8 +27,8 @@ def merge(input_indices: list[str], output: str) -> None:
 
 
 @main.command()
-@click.option("--input", type=str, required=True)
-@click.option("--output", type=str, required=True)
+@click.option("--input", "input_file", type=str, required=True)
+@click.option("--output", "output_file", type=str, required=True)
 @click.option("--proto-file", type=str, required=True, help="Path to the .proto file.")
 @click.option(
   "--record-type",
@@ -40,7 +40,9 @@ def merge(input_indices: list[str], output: str) -> None:
   "--key-field",
   type=str,
   multiple=True,
-  help="""Field to use as key. Can be specified multiple times. Supports pattern matching:
+  help="""Field to use as key. Can be specified multiple times.
+
+Supports pattern matching:
 - `*`: Matches any field in the current message.
 - `**`: Matches a sequence of fields at any depth.
 - `{a,b,c}`: Matches all of a set of fields (e.g., `{symbol,name}`).
@@ -50,7 +52,9 @@ Example: `--key-field 'location.*' --key-field '**.hgnc_id'`""",
   "--exclude-field",  # New option for exclusion patterns
   type=str,
   multiple=True,
-  help="""Field to exclude from indexing. Can be specified multiple times. Supports pattern matching:
+  help="""Field to exclude from indexing. Can be specified multiple times.
+
+Supports pattern matching:
 - `*`: Excludes any field in the current message.
 - `**`: Excludes a sequence of fields at any depth.
 - `{a,b,c}`: Excludes all of a set of fields (e.g., `{symbol,name}`).
@@ -62,9 +66,9 @@ Example: `--exclude-field 'location.end' --exclude-field '**.internal_id'`""",
   default=False,
   help="Create a trigram index instead of a hashtable index.",
 )
-def generate(
-  input: str,
-  output: str,
+def generate(  # noqa: PLR0913
+  input_file: str,
+  output_file: str,
   proto_file: str,
   record_type: str,
   key_field: list[str],
@@ -73,7 +77,13 @@ def generate(
 ) -> None:
   """Generate a bagz index from a bagz file."""
   generate_index(
-    input, output, proto_file, record_type, key_field, exclude_field, trigram,
+    input_file,
+    output_file,
+    proto_file,
+    record_type,
+    key_field,
+    exclude_field,
+    trigram,
   )
 
 
@@ -85,7 +95,7 @@ def dump(index_file: str) -> None:
   config_json = bagz_reader[len(bagz_reader) - 1].decode("utf-8")
   config = core.config_from_json(config_json)
 
-  print(f"Index Type: {config._get_type()}")
+  print(f"Index Type: {config._get_type()}")  # noqa: SLF001
   print(f"Config: {config.to_json()}")
   print("--- Index Contents ---")
 
@@ -100,7 +110,8 @@ def dump(index_file: str) -> None:
           key_instance = key_proto_class()
           key_instance.ParseFromString(record.key)
           print(
-            f"  Bucket {i}: Key: {key_instance.value}, Record IDs: {list(record.record_ids)}",
+            f"  Bucket {i}: Key: {key_instance.value}, "
+            f"Record IDs: {list(record.record_ids)}",
           )
   elif isinstance(config, trigram.TrigramConfig):
     for i in range(len(bagz_reader) - 1):
@@ -109,15 +120,17 @@ def dump(index_file: str) -> None:
         posting_list = messages_pb2.PostingList()
         posting_list.ParseFromString(posting_list_data)
         if config.delta_encode_record_ids:
-          trigram._delta_decode(posting_list)
+          trigram._delta_decode(posting_list)  # noqa: SLF001
         if config.store_positions:
           print(
-            f"  Posting List {i}: Record IDs: {list(posting_list.record_ids)}, Offsets: {list(posting_list.record_offsets)}",
+            f"  Posting List {i}: "
+            f"Record IDs: {list(posting_list.record_ids)}, "
+            f"Offsets: {list(posting_list.record_offsets)}",
           )
         else:
           print(f"  Posting List {i}: Record IDs: {list(posting_list.record_ids)}")
   else:
-    print(f"Unsupported index type for dumping: {config._get_type()}")
+    print(f"Unsupported index type for dumping: {config._get_type()}")  # noqa: SLF001
 
 
 if __name__ == "__main__":

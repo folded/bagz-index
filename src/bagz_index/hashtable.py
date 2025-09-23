@@ -95,7 +95,9 @@ class HashBucketMerger(core.IndexMerger):
     return keys, keys_to_records
 
   def __call__(
-    self, input_bagz_paths: list[str], output_bagz_path: str | pathlib.Path,
+    self,
+    input_bagz_paths: list[str],
+    output_bagz_path: str | pathlib.Path,
   ) -> None:
     keys, keys_to_records = self._collect_keys(input_bagz_paths)
 

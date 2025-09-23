@@ -1,6 +1,7 @@
 import abc
 import contextlib
 import importlib
+import importlib.resources
 import importlib.util
 import json
 import pathlib
@@ -15,10 +16,10 @@ from typing import Any, Generic, Self, TypeVar
 import bagz
 import google.protobuf.descriptor
 import google.protobuf.message
+import grpc_tools
 from grpc_tools import protoc  # Import protoc from grpc_tools
 
 from bagz_index import core
-
 
 WriterT = TypeVar("WriterT", bound=core.IndexWriter)
 
@@ -29,7 +30,7 @@ class ShardedIndexBuilder(abc.ABC, Generic[WriterT]):
     output_bagz_path: pathlib.Path,
     config: core.Config,
     shard_limit: int = 200_000,
-  ):
+  ) -> None:
     self.output_bagz_path = output_bagz_path
     self.config = config
     self.shard_limit = shard_limit
@@ -41,7 +42,6 @@ class ShardedIndexBuilder(abc.ABC, Generic[WriterT]):
     self.shard_id = 0
     self.cleanup_stack = contextlib.ExitStack()
 
-
   def __enter__(self) -> Self:
     temp_dir = self.cleanup_stack.enter_context(tempfile.TemporaryDirectory())
     self.temp_dir = pathlib.Path(temp_dir)
@@ -51,25 +51,25 @@ class ShardedIndexBuilder(abc.ABC, Generic[WriterT]):
   @property
   def current_writer(self) -> WriterT:
     if self._current_writer is None:
-      self._new_shard_writer()
-    assert self._current_writer is not None
+      self._current_writer = self._new_shard_writer()
     return self._current_writer
 
   @abc.abstractmethod
-  def _make_writer(self) -> WriterT:
-    ...
+  def _make_writer(self) -> WriterT: ...
 
-  def _new_shard_writer(self) -> None:
-    assert self.temp_dir is not None
+  def _new_shard_writer(self) -> WriterT:
+    if self.temp_dir is None:
+      raise RuntimeError("ShardedIndexBuilder must be used as a context manager.")
 
     shard_file_name = (
       f"{self.output_bagz_path.stem}-{self.shard_id:05d}{self.output_bagz_path.suffix}"
     )
     shard_path = self.temp_dir / shard_file_name
     self.shard_paths.append(shard_path)
-    self._current_writer = self._make_writer()
+    writer = self._make_writer()
     self.current_shard_record_count = 0
     self.shard_id += 1
+    return writer
 
   def _write_current_shard(self) -> None:
     if self._current_writer:
@@ -81,7 +81,7 @@ class ShardedIndexBuilder(abc.ABC, Generic[WriterT]):
     if self.current_shard_record_count >= self.shard_limit:
       self._write_current_shard()
 
-  def __exit__(self, *args) -> None:
+  def __exit__(self, *args) -> None:  # noqa: ANN002
     del args
     self._write_current_shard()  # Write the last shard
     if self.temp_dir and self.shard_paths:
@@ -121,17 +121,24 @@ def _compile_and_load_proto(
   proto_path = tmp_path / (namespace.replace(".", "_") + ".proto")
   proto_path.write_text(proto_def)
 
-  command = [
-    "grpc_tools.protoc",
-    f"--proto_path={tmp_path}",  # Primary proto_path
-    f"--python_out={tmp_path}",
-    str(proto_path.relative_to(tmp_path)),  # Proto file relative to tmp_path
-  ]
-  # Add additional include paths if provided
-  for include_path in proto_include_paths:
-    command.append(f"--proto_path={include_path}")
+  with importlib.resources.as_file(
+    importlib.resources.files(grpc_tools) / "_proto",
+  ) as grpc_tools_proto_path:
+    proto_path_args = [
+      f"--proto_path={include_path}" for include_path in proto_include_paths
+    ]
 
-  result_code = protoc.main(command)
+    command = [
+      "grpc_tools.protoc",
+      f"--proto_path={tmp_path}",  # Primary proto_path
+      f"--proto_path={grpc_tools_proto_path}",
+      *proto_path_args,
+      f"--python_out={tmp_path}",
+      str(proto_path.relative_to(tmp_path)),  # Proto file relative to tmp_path
+    ]
+    # Add additional include paths if provided
+
+    result_code = protoc.main(command)
 
   if result_code != 0:
     raise RuntimeError(f"protoc failed with exit code {result_code}")
@@ -154,7 +161,7 @@ def _import_record_type(
   proto_file: str,
   proto_module_name: str,
   record_type_name: str,
-) -> Any:
+) -> type[google.protobuf.message.Message]:
   """Compiles a .proto file and imports the specified record type."""
   with tempfile.TemporaryDirectory() as temp_dir:
     # Call _compile_proto to just compile the .proto file
@@ -192,68 +199,99 @@ def _yield_field_paths(
         yield (field_desc.name, *new_path), nested_field_desc
 
 
-def _matches_pattern(
-  field_path: tuple[str, ...],
-  pattern_components: list[str],
-) -> bool:
-  if not pattern_components and not field_path:
-    return True
-  if not pattern_components and field_path:
+class Matcher(abc.ABC):
+  @abc.abstractmethod
+  def match(
+    self,
+    field_path: tuple[str, ...],
+    pattern: "Pattern",
+    pattern_index: int,
+  ) -> bool: ...
+
+
+class ExactMatcher(Matcher):
+  def __init__(self, name: str) -> None:
+    self.name = name
+
+  def match(
+    self,
+    field_path: tuple[str, ...],
+    pattern: "Pattern",
+    pattern_index: int,
+  ) -> bool:
+    if not field_path:
+      return False
+    if self.name == field_path[0]:
+      return pattern.match(field_path[1:], pattern_index + 1)
     return False
-  if pattern_components and not field_path:
-    return all(c == "**" for c in pattern_components)
 
-  current_pattern_component = pattern_components[0]
-  remaining_pattern_components = pattern_components[1:]
-  current_field_component = field_path[0]
-  remaining_field_path = field_path[1:]
 
-  # Handle ** wildcard
-  if current_pattern_component == "**":
+class WildcardMatcher(Matcher):
+  def match(
+    self,
+    field_path: tuple[str, ...],
+    pattern: "Pattern",
+    pattern_index: int,
+  ) -> bool:
+    if not field_path:
+      return False
+    return pattern.match(field_path[1:], pattern_index + 1)
+
+
+class DoubleWildcardMatcher(Matcher):
+  def match(
+    self,
+    field_path: tuple[str, ...],
+    pattern: "Pattern",
+    pattern_index: int,
+  ) -> bool:
     # Case 1: ** matches zero fields
-    if _matches_pattern(field_path, remaining_pattern_components):
+    if pattern.match(field_path, pattern_index + 1):
       return True
     # Case 2: ** matches one or more fields
-    if field_path:  # Only if there are fields left to match
-      return _matches_pattern(
-        remaining_field_path,
-        pattern_components,
-      )  # Keep pattern_components as is
+    if field_path:
+      return self.match(field_path[1:], pattern, pattern_index)
     return False
 
-  # Handle * wildcard
-  if current_pattern_component == "*":
-    if not field_path:  # If field_path is empty, * cannot match anything
+
+class SetMatcher(Matcher):
+  def __init__(self, field_names: list[str]) -> None:
+    self.field_names = field_names
+
+  def match(
+    self,
+    field_path: tuple[str, ...],
+    pattern: "Pattern",
+    pattern_index: int,
+  ) -> bool:
+    if not field_path:
       return False
-    return _matches_pattern(remaining_field_path, remaining_pattern_components)
-
-  # Handle {a,b,c} field set
-  if current_pattern_component.startswith("{") and current_pattern_component.endswith(
-    "}",
-  ):
-    field_names = _parse_field_set(current_pattern_component)
-    if current_field_component in field_names:
-      return _matches_pattern(remaining_field_path, remaining_pattern_components)
+    if field_path[0] in self.field_names:
+      return pattern.match(field_path[1:], pattern_index + 1)
     return False
 
-  # Exact match
-  if current_pattern_component == current_field_component:
-    return _matches_pattern(remaining_field_path, remaining_pattern_components)
 
-  return False
+class Pattern:
+  def __init__(self, matchers: Sequence[Matcher]) -> None:
+    self.matchers = matchers
+
+  def match(self, field_path: tuple[str, ...], pattern_index: int) -> bool:
+    if pattern_index >= len(self.matchers):
+      return not field_path
+    if not field_path:
+      return all(
+        isinstance(m, DoubleWildcardMatcher) for m in self.matchers[pattern_index:]
+      )
+
+    matcher = self.matchers[pattern_index]
+    return matcher.match(field_path, self, pattern_index)
 
 
-def expand_field_pattern(
-  msg_class: type[google.protobuf.message.Message],
-  pattern_path: str,
-) -> set[tuple[str, ...]]:
-  expanded_paths: set[tuple[str, ...]] = set()
-
-  # Parse the pattern_path into components, handling braces
+def parse_pattern(pattern_str: str) -> Pattern:
   components = []
   current_component = ""
   brace_level = 0
-  for char in pattern_path:
+  for char in pattern_str:
     if char == "{":
       brace_level += 1
       current_component += char
@@ -268,8 +306,32 @@ def expand_field_pattern(
   if current_component:
     components.append(current_component)
 
+  matchers: list[Matcher] = []
+  for component in components:
+    if component == "**":
+      matchers.append(DoubleWildcardMatcher())
+    elif component == "*":
+      matchers.append(WildcardMatcher())
+    elif component.startswith("{") and component.endswith("}"):
+      matchers.append(SetMatcher(_parse_field_set(component)))
+    else:
+      matchers.append(ExactMatcher(component))
+  return Pattern(matchers)
+
+
+def _matches_pattern(field_path: tuple[str, ...], pattern: Pattern) -> bool:
+  return pattern.match(field_path, 0)
+
+
+def expand_field_pattern(
+  msg_class: type[google.protobuf.message.Message],
+  pattern_path: str,
+) -> set[tuple[str, ...]]:
+  expanded_paths: set[tuple[str, ...]] = set()
+  pattern = parse_pattern(pattern_path)
+
   for field_path_tuple, _ in _yield_field_paths(msg_class.DESCRIPTOR):
-    if _matches_pattern(field_path_tuple, components):
+    if _matches_pattern(field_path_tuple, pattern):
       expanded_paths.add(field_path_tuple)
   return expanded_paths
 
@@ -313,7 +375,7 @@ def make_hashtable_index(
   reader: bagz.Reader,
   output_path: pathlib.Path,
   expanded_key_fields: set[tuple[str, ...]],  # Changed type
-  record_type: Any,
+  record_type: type[google.protobuf.message.Message],
   key_proto_name: str,
 ) -> None:
   config = core.config_from_json(
@@ -322,18 +384,21 @@ def make_hashtable_index(
         "type": "hashbucket",
         "avg_bucket_size": 0.9,
         "key_proto_name": key_proto_name,
-      }
-    )
+      },
+    ),
   )
   with ShardedKeyIndexBuilder(
-    output_path, config, shard_limit=200_000,
+    output_path,
+    config,
+    shard_limit=200_000,
   ) as sharded_builder:
     for i, record in enumerate(reader):
       pb = record_type()
       pb.ParseFromString(record)
       for key in lookup_field_values(pb, expanded_key_fields):  # Changed call
         sharded_builder.add_record(
-          sharded_builder.current_writer.key_proto(value=key), [i]
+          sharded_builder.current_writer.key_proto(value=key),
+          [i],
         )
 
 
@@ -341,7 +406,7 @@ def make_trigram_index(
   reader: bagz.Reader,
   output_path: pathlib.Path,
   expanded_key_fields: set[tuple[str, ...]],  # Changed type
-  record_type: Any,
+  record_type: type[google.protobuf.message.Message],
 ) -> None:
   trigram_charset = string.ascii_lowercase + string.digits
   config_json = json.dumps(
@@ -356,7 +421,9 @@ def make_trigram_index(
   config = core.config_from_json(config_json)
 
   with ShardedTextIndexBuilder(
-    output_path, config, shard_limit=200_000,
+    output_path,
+    config,
+    shard_limit=200_000,
   ) as sharded_builder:
     for i, record in enumerate(reader):
       pb = record_type()
@@ -365,17 +432,11 @@ def make_trigram_index(
         sharded_builder.add_record(key, i)
 
 
-def generate_index(
-  input_bagz_path: str,
-  output_bagz_path: str,
-  proto_file: str,
-  record_type_name: str,
+def _generate_matching_field_paths(
+  record_type_class: type[google.protobuf.message.Message],
   key_field_patterns: list[str],
   exclude_field_patterns: list[str],
-  is_trigram_index: bool,
-) -> None:
-  record_type_class = _import_record_type(proto_file, "index_proto", record_type_name)
-
+) -> set[tuple[str, ...]]:
   all_expanded_key_fields: set[tuple[str, ...]] = set()
   for pattern in key_field_patterns:
     all_expanded_key_fields.update(expand_field_pattern(record_type_class, pattern))
@@ -383,7 +444,13 @@ def generate_index(
     all_expanded_key_fields.difference_update(
       expand_field_pattern(record_type_class, pattern),
     )
+  return all_expanded_key_fields
 
+
+def _get_key_proto_name(
+  all_expanded_key_fields: set[tuple[str, ...]],
+  record_type_class: type[google.protobuf.message.Message],
+) -> str:
   # Type checking for expanded fields
   first_field_type: int | None = None
   is_repeated_field: bool = False
@@ -393,7 +460,8 @@ def generate_index(
     for component in path_tuple:
       if component not in current_msg_class.DESCRIPTOR.fields_by_name:
         raise ValueError(
-          f"Field '{component}' not found in message '{current_msg_class.__name__}' for path '{'.'.join(path_tuple)}'",
+          f"Field '{component}' not found in message '{current_msg_class.__name__}' "
+          f"for path '{'.'.join(path_tuple)}'",
         )
       field_desc = current_msg_class.DESCRIPTOR.fields_by_name[component]
       current_field_type = field_desc.type
@@ -415,8 +483,31 @@ def generate_index(
       key_proto_name = "bagz_index.keys.Int64Key"
     case _:
       raise TypeError(
-        f"Unsupported key field type: {first_field_type} (repeated: {is_repeated_field})",
+        f"Unsupported key field type: {first_field_type}"
+        f" (repeated: {is_repeated_field})",
       )
+
+  return key_proto_name
+
+
+def generate_index(
+  input_bagz_path: str,
+  output_bagz_path: str,
+  proto_file: str,
+  record_type_name: str,
+  key_field_patterns: list[str],
+  exclude_field_patterns: list[str],
+  is_trigram_index: bool,
+) -> None:
+  record_type_class = _import_record_type(proto_file, "index_proto", record_type_name)
+
+  all_expanded_key_fields = _generate_matching_field_paths(
+    record_type_class,
+    key_field_patterns,
+    exclude_field_patterns,
+  )
+
+  key_proto_name = _get_key_proto_name(all_expanded_key_fields, record_type_class)
 
   reader = bagz.Reader(pathlib.Path(input_bagz_path))
   output_path = pathlib.Path(output_bagz_path)

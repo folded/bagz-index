@@ -2,6 +2,8 @@ import os
 import pathlib
 import sys
 import tempfile
+from collections.abc import Generator
+from typing import ClassVar, Protocol
 
 import google.protobuf.descriptor
 import google.protobuf.message
@@ -18,6 +20,7 @@ from bagz_index.generate_logic import (
   _yield_field_paths,
   expand_field_pattern,
   lookup_field_values,
+  parse_pattern,
 )
 
 # Define a dummy proto content for testing
@@ -41,8 +44,24 @@ message TestMessage {
 """
 
 
+class ISubMessage(Protocol):
+  sub_id: str
+  sub_name: str
+  sub_value: int
+
+
+class ITestMessage(Protocol):
+  Submessage: ClassVar[type[ISubMessage]]
+  id: str
+  name: str
+  value: int
+  sub: ISubMessage
+  tags: list[str]
+  nested_subs: list[ISubMessage]
+
+
 @pytest.fixture(scope="module")
-def test_message_class():
+def test_message_class() -> Generator[type[ITestMessage], None, None]:
   with tempfile.TemporaryDirectory() as temp_dir:
     proto_file_path = pathlib.Path(temp_dir) / "test.proto"
     proto_file_path.write_text(TEST_PROTO_CONTENT)
@@ -61,7 +80,7 @@ def test_message_class():
 
 
 @pytest.fixture
-def sample_message(test_message_class):
+def sample_message(test_message_class: type[ITestMessage]) -> ITestMessage:
   return test_message_class(
     id="test_id",
     name="test_name",
@@ -75,7 +94,9 @@ def sample_message(test_message_class):
   )
 
 
-def test_compile_proto_and_import_record_type(test_message_class):
+def test_compile_proto_and_import_record_type(
+  test_message_class: type[ITestMessage],
+) -> None:
   assert test_message_class is not None
   assert issubclass(test_message_class, google.protobuf.message.Message)
   assert test_message_class.__name__ == "TestMessage"
@@ -83,14 +104,14 @@ def test_compile_proto_and_import_record_type(test_message_class):
   assert issubclass(test_message_class.SubMessage, google.protobuf.message.Message)
 
 
-def test_parse_field_set():
+def test_parse_field_set() -> None:
   assert _parse_field_set("field1") == ["field1"]
   assert _parse_field_set("{field1,field2}") == ["field1", "field2"]
   assert _parse_field_set("{ field1 , field2 }") == ["field1", "field2"]
   assert _parse_field_set("{}") == [""]
 
 
-def test_yield_field_paths(test_message_class):
+def test_yield_field_paths(test_message_class: type[ITestMessage]) -> None:
   paths = set()
   for path, _ in _yield_field_paths(test_message_class.DESCRIPTOR):
     paths.add(path)
@@ -112,46 +133,50 @@ def test_yield_field_paths(test_message_class):
   assert paths == expected_paths
 
 
-def test_matches_pattern_exact():
-  assert _matches_pattern(("id",), ["id"])
-  assert _matches_pattern(("sub", "sub_id"), ["sub", "sub_id"])
-  assert not _matches_pattern(("id",), ["name"])
-  assert not _matches_pattern(("sub", "sub_id"), ["sub", "sub_name"])
+def test_matches_pattern_exact() -> None:
+  assert _matches_pattern(("id",), parse_pattern("id"))
+  assert _matches_pattern(("sub", "sub_id"), parse_pattern("sub.sub_id"))
+  assert not _matches_pattern(("id",), parse_pattern("name"))
+  assert not _matches_pattern(("sub", "sub_id"), parse_pattern("sub.sub_name"))
 
 
-def test_matches_pattern_wildcard_star():
-  assert _matches_pattern(("id",), ["*"])
-  assert _matches_pattern(("sub", "sub_id"), ["sub", "*"])
-  assert _matches_pattern(("sub", "sub_id"), ["*", "sub_id"])
+def test_matches_pattern_wildcard_star() -> None:
+  assert _matches_pattern(("id",), parse_pattern("*"))
+  assert _matches_pattern(("sub", "sub_id"), parse_pattern("sub.*"))
+  assert _matches_pattern(("sub", "sub_id"), parse_pattern("*.sub_id"))
 
 
-def test_matches_pattern_wildcard_double_star():
-  assert _matches_pattern(("id",), ["**"])
-  assert _matches_pattern(("sub", "sub_id"), ["**", "sub_id"])
-  assert _matches_pattern(("sub", "sub_id"), ["sub", "**"])
-  assert _matches_pattern(("sub", "sub_id"), ["**", "**", "sub_id"])
-  assert _matches_pattern(("sub", "sub_id"), ["**", "*", "sub_id"])
-  assert not _matches_pattern(("sub", "sub_id"), ["**", "id"])
+def test_matches_pattern_wildcard_double_star() -> None:
+  assert _matches_pattern(("id",), parse_pattern("**"))
+  assert _matches_pattern(("sub", "sub_id"), parse_pattern("**.sub_id"))
+  assert _matches_pattern(("sub", "sub_id"), parse_pattern("sub.**"))
+  assert _matches_pattern(("sub", "sub_id"), parse_pattern("**.**.sub_id"))
+  assert _matches_pattern(("sub", "sub_id"), parse_pattern("**.*.sub_id"))
+  assert not _matches_pattern(("sub", "sub_id"), parse_pattern("**.id"))
 
 
-def test_matches_pattern_field_set():
-  assert _matches_pattern(("id",), ["{id,name}"])
-  assert _matches_pattern(("name",), ["{id,name}"])
-  assert not _matches_pattern(("value",), ["{id,name}"])
-  assert _matches_pattern(("sub", "sub_id"), ["sub", "{sub_id,sub_name}"])
+def test_matches_pattern_field_set() -> None:
+  assert _matches_pattern(("id",), parse_pattern("{id,name}"))
+  assert _matches_pattern(("name",), parse_pattern("{id,name}"))
+  assert not _matches_pattern(("value",), parse_pattern("{id,name}"))
+  assert _matches_pattern(("sub", "sub_id"), parse_pattern("sub.{sub_id,sub_name}"))
 
 
-def test_expand_field_pattern_simple(test_message_class):
+def test_expand_field_pattern_simple(test_message_class: type[ITestMessage]) -> None:
   expanded = expand_field_pattern(test_message_class, "id")
   assert expanded == {("id",)}
 
 
-def test_expand_field_pattern_wildcard_star(test_message_class):
+def test_expand_field_pattern_wildcard_star(
+  test_message_class: type[ITestMessage],
+) -> None:
   expanded = expand_field_pattern(test_message_class, "sub.*")
   assert expanded == {("sub", "sub_id"), ("sub", "sub_name"), ("sub", "sub_value")}
 
 
-def test_expand_field_pattern_wildcard_double_star(test_message_class):
+def test_expand_field_pattern_wildcard_double_star(
+  test_message_class: type[ITestMessage],
+) -> None:
   expanded = expand_field_pattern(test_message_class, "**.sub_id")
   assert expanded == {("sub", "sub_id"), ("nested_subs", "sub_id")}
 
@@ -173,7 +198,7 @@ def test_expand_field_pattern_wildcard_double_star(test_message_class):
   assert expanded_all_paths == expected_all_paths
 
 
-def test_expand_field_pattern_field_set(test_message_class):
+def test_expand_field_pattern_field_set(test_message_class: type[ITestMessage]) -> None:
   expanded = expand_field_pattern(test_message_class, "{id,name}")
   assert expanded == {("id",), ("name",)}
 
@@ -181,12 +206,12 @@ def test_expand_field_pattern_field_set(test_message_class):
   assert expanded == {("sub", "sub_id"), ("sub", "sub_name")}
 
 
-def test_expand_field_pattern_mixed(test_message_class):
+def test_expand_field_pattern_mixed(test_message_class: type[ITestMessage]) -> None:
   expanded = expand_field_pattern(test_message_class, "**.sub_id")
   assert expanded == {("sub", "sub_id"), ("nested_subs", "sub_id")}
 
 
-def test_get_field_value(sample_message):
+def test_get_field_value(sample_message: ITestMessage) -> None:
   msg = sample_message
   assert list(_get_field_value(msg, ("id",))) == ["test_id"]
   assert list(_get_field_value(msg, ("sub", "sub_id"))) == ["s1"]
@@ -195,7 +220,7 @@ def test_get_field_value(sample_message):
   assert list(_get_field_value(msg, ("sub",))) == [msg.sub]
 
 
-def test_lookup_field_values(sample_message):
+def test_lookup_field_values(sample_message: ITestMessage) -> None:
   msg = sample_message
 
   expanded_paths_single = {("id",)}
