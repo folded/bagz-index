@@ -136,3 +136,8 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Added by Gemini
+gene.proto
+hgnc_id_index.bagz
+hgnc_test.bagz
