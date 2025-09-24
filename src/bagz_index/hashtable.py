@@ -40,12 +40,6 @@ class HashBucketConfig(core.KeyConfig):
     h = blake3.blake3(key).digest()
     return int.from_bytes(h, "little")
 
-  def supports_protocol(
-    self,
-    protocol: type[core.IndexReader | core.IndexWriter],
-  ) -> bool:
-    return protocol in (core.SupportsKeyAddition, core.SupportsKeyLookup)
-
 
 class HashBucketMerger(core.IndexMerger):
   def __init__(self, config: HashBucketConfig) -> None:
@@ -57,7 +51,7 @@ class HashBucketMerger(core.IndexMerger):
   ) -> messages_pb2.HashRecord:
     merged_record = messages_pb2.HashRecord()
     merged_record.key = records[0].key
-    record_id_set = set()
+    record_id_set: set[int] = set()
     for record in records:
       record_id_set.update(record.record_ids)
     merged_record.record_ids.extend(sorted(record_id_set))
@@ -77,7 +71,7 @@ class HashBucketMerger(core.IndexMerger):
 
   def _collect_keys(
     self,
-    input_bagz_paths: list[str],
+    input_bagz_paths: list[str | pathlib.Path],
   ) -> tuple[set[bytes], dict[bytes, list[tuple[int, int]]]]:
     keys: set[bytes] = set()
     keys_to_records: dict[bytes, list[tuple[int, int]]] = collections.defaultdict(list)
@@ -96,7 +90,7 @@ class HashBucketMerger(core.IndexMerger):
 
   def __call__(
     self,
-    input_bagz_paths: list[str],
+    input_bagz_paths: list[str | pathlib.Path],
     output_bagz_path: str | pathlib.Path,
   ) -> None:
     keys, keys_to_records = self._collect_keys(input_bagz_paths)
@@ -136,6 +130,10 @@ class HashBucketWriter(core.IndexWriter):
     self._data: dict[bytes, set[int]] = collections.defaultdict(set)
 
   @property
+  def as_key_writer(self) -> core.SupportsKeyAddition:
+    return self
+
+  @property
   def key_proto(self) -> type[message.Message]:
     return self._config.key_proto
 
@@ -168,6 +166,10 @@ class HashBucketReader(core.IndexReader):
     self._bag = bag
     self._config = config
     self._num_buckets = len(self._bag) - 1
+
+  @property
+  def as_key_lookup(self) -> core.SupportsKeyLookup:
+    return self
 
   @property
   def key_proto(self) -> type[message.Message]:

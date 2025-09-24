@@ -76,12 +76,6 @@ class TrigramConfig(core.Config):
   def make_merger(self) -> core.IndexMerger:
     return TrigramMerger(self)
 
-  def supports_protocol(
-    self,
-    protocol: type[core.IndexReader | core.IndexWriter],
-  ) -> bool:
-    return protocol in (core.SupportsTextAddition, core.SupportsTextSearch)
-
 
 class TrigramMerger(core.IndexMerger):
   def __init__(self, config: TrigramConfig) -> None:
@@ -91,7 +85,7 @@ class TrigramMerger(core.IndexMerger):
     self,
     postings_to_merge: list[messages_pb2.PostingList],
   ) -> messages_pb2.PostingList:
-    all_tuples = []
+    all_tuples: list[tuple[int, int]] = []
     for pl in postings_to_merge:
       all_tuples.extend(zip(pl.record_ids, pl.record_offsets, strict=True))
 
@@ -113,7 +107,7 @@ class TrigramMerger(core.IndexMerger):
     self,
     postings_to_merge: list[messages_pb2.PostingList],
   ) -> messages_pb2.PostingList:
-    all_record_ids = set()
+    all_record_ids: set[int] = set()
     for pl in postings_to_merge:
       all_record_ids.update(pl.record_ids)
 
@@ -160,7 +154,7 @@ class TrigramMerger(core.IndexMerger):
 
   def __call__(
     self,
-    input_bagz_paths: list[str],
+    input_bagz_paths: list[str | pathlib.Path],
     output_bagz_path: str | pathlib.Path,
   ) -> None:
     readers = [bagz.Reader(p) for p in input_bagz_paths]
@@ -202,12 +196,16 @@ class TrigramWriter(core.IndexWriter):
     else:
       self._impl = _SimpleImpl(config)
 
+  @property
+  def as_text_writer(self) -> core.SupportsTextAddition:
+    return self
+
   def add_text(self, text: str, record_id: int) -> None:
     if self._config.normalize:
       text = _normalize_text(text, self._config.compiled_normalize_regex)
     self._impl.add_text(text, record_id)
 
-  def write(self, bagz_path: str) -> None:
+  def write(self, bagz_path: str | pathlib.Path) -> None:
     self._impl.write(bagz_path)
 
 
@@ -219,7 +217,7 @@ class _WriterImpl(abc.ABC):
   def add_text(self, text: str, record_id: int) -> None: ...
 
   @abc.abstractmethod
-  def write(self, bagz_path: str) -> None: ...
+  def write(self, bagz_path: str | pathlib.Path) -> None: ...
 
 
 class _SimpleImpl(_WriterImpl):
@@ -235,7 +233,7 @@ class _SimpleImpl(_WriterImpl):
       if index >= 0:
         self._postings[index].add(record_id)
 
-  def write(self, bagz_path: str) -> None:
+  def write(self, bagz_path: str | pathlib.Path) -> None:
     with bagz.Writer(bagz_path) as bag:
       for posting_set in self._postings:
         record_ids = sorted(posting_set)
@@ -262,7 +260,7 @@ class _PositionalImpl(_WriterImpl):
         self._postings[index][0].append(record_id)
         self._postings[index][1].append(i)
 
-  def write(self, bagz_path: str) -> None:
+  def write(self, bagz_path: str | pathlib.Path) -> None:
     with bagz.Writer(bagz_path) as bag:
       for rids, offsets in self._postings:
         posting_tuples = sorted(zip(rids, offsets, strict=True))
@@ -348,6 +346,10 @@ class TrigramReader(core.IndexReader):
   def __init__(self, config: TrigramConfig, bag: bagz.Reader) -> None:
     self._config = config
     self._bag = bag
+
+  @property
+  def as_text_search(self) -> core.SupportsTextSearch:
+    return self
 
   def _get_record_ids(self, posting_list: messages_pb2.PostingList) -> Sequence[int]:
     if self._config.delta_encode_record_ids:

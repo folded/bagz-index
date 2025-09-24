@@ -45,7 +45,7 @@ def _build_index(
   name: str,
   config: trigram.TrigramConfig,
 ) -> pathlib.Path:
-  writer = core.make_writer(config, core.SupportsTextAddition)
+  writer = core.make_writer(config).as_text_writer
   for i, doc in enumerate(_TEST_DOCS):
     writer.add_text(doc, i)
 
@@ -126,7 +126,7 @@ def test_trigram_search_simple(
   config: trigram.TrigramConfig,
 ) -> None:
   path = _build_index(tmp_path, name, config)
-  reader = core.make_reader(str(path), core.SupportsTextSearch)
+  reader = core.make_reader(path).as_text_search
   _test_searches(config, reader)
 
 
@@ -145,21 +145,21 @@ def test_merge_with_config(
   config: trigram.TrigramConfig,
 ) -> None:
   # Create two indices
-  writer1 = core.make_writer(config, core.SupportsTextAddition)
+  writer1 = core.make_writer(config).as_text_writer
   index_docs = list(enumerate(_TEST_DOCS))
   for i, doc in index_docs[0::2]:
     writer1.add_text(doc, i)
   bagz_path1 = tmp_path / f"{name}_index1.bagz"
-  writer1.write(str(bagz_path1))
+  writer1.write(bagz_path1)
 
-  writer2 = core.make_writer(config, core.SupportsTextAddition)
+  writer2 = core.make_writer(config).as_text_writer
   for i, doc in index_docs[1::2]:
     writer2.add_text(doc, i)
   bagz_path2 = tmp_path / f"{name}_index2.bagz"
-  writer2.write(str(bagz_path2))
+  writer2.write(bagz_path2)
 
   # Merge them
   merged_path = tmp_path / f"{name}_merged.bagz"
-  core.merge_indices([str(bagz_path1), str(bagz_path2)], str(merged_path))
+  core.merge_indices([bagz_path1, bagz_path2], merged_path)
 
-  _test_searches(config, core.make_reader(str(merged_path), core.SupportsTextSearch))
+  _test_searches(config, core.make_reader(merged_path).as_text_search)

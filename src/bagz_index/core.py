@@ -3,26 +3,42 @@ import dataclasses
 import json
 import pathlib
 from collections.abc import Sequence
-from typing import Any, ClassVar, Protocol, Self, TypeVar
+from typing import Any, ClassVar, Protocol, Self
 
 import bagz
 from google.protobuf import message
 
 from bagz_index import key_utils
 
-T = TypeVar("T")
-
 
 class IndexReader(Protocol):
-  pass
+  @property
+  def as_key_lookup(self) -> "SupportsKeyLookup":
+    raise RuntimeError(f"{self.__class__.__name__} does not support key lookup.")
+
+  @property
+  def as_text_search(self) -> "SupportsTextSearch":
+    raise RuntimeError(f"{self.__class__.__name__} does not support text search.")
 
 
 class IndexWriter(Protocol):
+  @property
+  def as_key_writer(self) -> "SupportsKeyAddition":
+    raise RuntimeError(f"{self.__class__.__name__} does not support key addition.")
+
+  @property
+  def as_text_writer(self) -> "SupportsTextAddition":
+    raise RuntimeError(f"{self.__class__.__name__} does not support text addition.")
+
   def write(self, bagz_path: str | pathlib.Path) -> None: ...
 
 
 class IndexMerger(Protocol):
-  def __call__(self, input_bagz_paths: list[str], output_bagz_path: str) -> None: ...
+  def __call__(
+    self,
+    input_bagz_paths: list[str | pathlib.Path],
+    output_bagz_path: str | pathlib.Path,
+  ) -> None: ...
 
 
 class SupportsKeyLookup(IndexReader, Protocol):
@@ -114,9 +130,6 @@ class Config(abc.ABC):
   @abc.abstractmethod
   def make_merger(self) -> IndexMerger: ...
 
-  @abc.abstractmethod
-  def supports_protocol(self, protocol: type[IndexReader | IndexWriter]) -> bool: ...
-
 
 @dataclasses.dataclass(frozen=True)
 class KeyConfig(Config):
@@ -137,33 +150,26 @@ def config_from_json(json_string: str) -> "Config":
   return config_class.from_json(data)
 
 
-def make_writer(config: Config, expected_protocol: type[T]) -> T:
-  if not config.supports_protocol(expected_protocol):
-    raise TypeError(
-      f"Index writer of type '{type(config).__name__}' "
-      f"does not support the '{expected_protocol.__name__}' protocol.",
-    )
-  return config.make_writer()  # type: ignore[return-value]
+def make_writer(config: Config) -> IndexWriter:
+  return config.make_writer()
 
 
-def make_reader(bagz_path: str, expected_protocol: type[T]) -> T:
+def make_reader(bagz_path: str | pathlib.Path) -> IndexReader:
   reader = bagz.Reader(bagz_path)
   config = config_from_json(reader[len(reader) - 1].decode("utf-8"))
-  if not config.supports_protocol(expected_protocol):
-    raise TypeError(
-      f"Index reader of type '{type(config).__name__}' "
-      f"does not support the '{expected_protocol.__name__}' protocol.",
-    )
-  return config.make_reader(reader)  # type: ignore[return-value]
+  return config.make_reader(reader)
 
 
-def _config_from_bagz(bagz_path: str) -> Config:
+def _config_from_bagz(bagz_path: str | pathlib.Path) -> Config:
   reader = bagz.Reader(bagz_path)
   config_json = reader[len(reader) - 1].decode("utf-8")
   return config_from_json(config_json)
 
 
-def merge_indices(input_bagz_paths: list[str], output_bagz_path: str) -> None:
+def merge_indices(
+  input_bagz_paths: list[str | pathlib.Path],
+  output_bagz_path: str | pathlib.Path,
+) -> None:
   if not input_bagz_paths:
     raise ValueError("At least one input bagz path must be provided.")
 

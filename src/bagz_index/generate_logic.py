@@ -91,7 +91,7 @@ class ShardedIndexBuilder(abc.ABC, Generic[WriterT]):
 
 class ShardedKeyIndexBuilder(ShardedIndexBuilder[core.SupportsKeyAddition]):
   def _make_writer(self) -> core.SupportsKeyAddition:
-    return core.make_writer(self.config, core.SupportsKeyAddition)
+    return core.make_writer(self.config).as_key_writer
 
   def add_record(
     self,
@@ -104,7 +104,7 @@ class ShardedKeyIndexBuilder(ShardedIndexBuilder[core.SupportsKeyAddition]):
 
 class ShardedTextIndexBuilder(ShardedIndexBuilder[core.SupportsTextAddition]):
   def _make_writer(self) -> core.SupportsTextAddition:
-    return core.make_writer(self.config, core.SupportsTextAddition)
+    return core.make_writer(self.config).as_text_writer
 
   def add_record(self, text: str, record_id: int) -> None:
     self.current_writer.add_text(text, record_id)
@@ -466,7 +466,7 @@ def _get_key_proto_name(
       field_desc = current_msg_class.DESCRIPTOR.fields_by_name[component]
       current_field_type = field_desc.type
       if field_desc.type == field_desc.TYPE_MESSAGE:
-        current_msg_class = field_desc.message_type._concrete_class
+        current_msg_class = field_desc.message_type._concrete_class  # noqa: SLF001
 
     if first_field_type is None:
       first_field_type = current_field_type
@@ -513,7 +513,8 @@ def generate_index(
   output_path = pathlib.Path(output_bagz_path)
 
   if is_trigram_index:
-    assert key_proto_name == "bagz_index.keys.StringKey"
+    if key_proto_name != "bagz_index.keys.StringKey":
+      raise ValueError("Trigram indices do not support custom key protos")
     make_trigram_index(reader, output_path, all_expanded_key_fields, record_type_class)
   else:
     make_hashtable_index(

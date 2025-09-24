@@ -61,7 +61,9 @@ class ITestMessage(Protocol):
 
 
 @pytest.fixture(scope="module")
-def test_message_class() -> Generator[type[ITestMessage], None, None]:
+def test_message_class() -> (
+  Generator[type[google.protobuf.message.Message], None, None]
+):
   with tempfile.TemporaryDirectory() as temp_dir:
     proto_file_path = pathlib.Path(temp_dir) / "test.proto"
     proto_file_path.write_text(TEST_PROTO_CONTENT)
@@ -80,7 +82,9 @@ def test_message_class() -> Generator[type[ITestMessage], None, None]:
 
 
 @pytest.fixture
-def sample_message(test_message_class: type[ITestMessage]) -> ITestMessage:
+def sample_message(
+  test_message_class: type[google.protobuf.message.Message],
+) -> ITestMessage:
   return test_message_class(
     id="test_id",
     name="test_name",
@@ -95,7 +99,7 @@ def sample_message(test_message_class: type[ITestMessage]) -> ITestMessage:
 
 
 def test_compile_proto_and_import_record_type(
-  test_message_class: type[ITestMessage],
+  test_message_class: type[google.protobuf.message.Message],
 ) -> None:
   assert test_message_class is not None
   assert issubclass(test_message_class, google.protobuf.message.Message)
@@ -111,7 +115,9 @@ def test_parse_field_set() -> None:
   assert _parse_field_set("{}") == [""]
 
 
-def test_yield_field_paths(test_message_class: type[ITestMessage]) -> None:
+def test_yield_field_paths(
+  test_message_class: type[google.protobuf.message.Message],
+) -> None:
   paths = set()
   for path, _ in _yield_field_paths(test_message_class.DESCRIPTOR):
     paths.add(path)
@@ -162,20 +168,22 @@ def test_matches_pattern_field_set() -> None:
   assert _matches_pattern(("sub", "sub_id"), parse_pattern("sub.{sub_id,sub_name}"))
 
 
-def test_expand_field_pattern_simple(test_message_class: type[ITestMessage]) -> None:
+def test_expand_field_pattern_simple(
+  test_message_class: type[google.protobuf.message.Message],
+) -> None:
   expanded = expand_field_pattern(test_message_class, "id")
   assert expanded == {("id",)}
 
 
 def test_expand_field_pattern_wildcard_star(
-  test_message_class: type[ITestMessage],
+  test_message_class: type[google.protobuf.message.Message],
 ) -> None:
   expanded = expand_field_pattern(test_message_class, "sub.*")
   assert expanded == {("sub", "sub_id"), ("sub", "sub_name"), ("sub", "sub_value")}
 
 
 def test_expand_field_pattern_wildcard_double_star(
-  test_message_class: type[ITestMessage],
+  test_message_class: type[google.protobuf.message.Message],
 ) -> None:
   expanded = expand_field_pattern(test_message_class, "**.sub_id")
   assert expanded == {("sub", "sub_id"), ("nested_subs", "sub_id")}
@@ -198,7 +206,9 @@ def test_expand_field_pattern_wildcard_double_star(
   assert expanded_all_paths == expected_all_paths
 
 
-def test_expand_field_pattern_field_set(test_message_class: type[ITestMessage]) -> None:
+def test_expand_field_pattern_field_set(
+  test_message_class: type[google.protobuf.message.Message],
+) -> None:
   expanded = expand_field_pattern(test_message_class, "{id,name}")
   assert expanded == {("id",), ("name",)}
 
@@ -206,7 +216,9 @@ def test_expand_field_pattern_field_set(test_message_class: type[ITestMessage]) 
   assert expanded == {("sub", "sub_id"), ("sub", "sub_name")}
 
 
-def test_expand_field_pattern_mixed(test_message_class: type[ITestMessage]) -> None:
+def test_expand_field_pattern_mixed(
+  test_message_class: type[google.protobuf.message.Message],
+) -> None:
   expanded = expand_field_pattern(test_message_class, "**.sub_id")
   assert expanded == {("sub", "sub_id"), ("nested_subs", "sub_id")}
 
@@ -223,17 +235,17 @@ def test_get_field_value(sample_message: ITestMessage) -> None:
 def test_lookup_field_values(sample_message: ITestMessage) -> None:
   msg = sample_message
 
-  expanded_paths_single = {("id",)}
+  expanded_paths_single: set[tuple[str, ...]] = {("id",)}
   assert lookup_field_values(msg, expanded_paths_single) == {"test_id"}
 
-  expanded_paths_multiple = {("id",), ("name",)}
+  expanded_paths_multiple: set[tuple[str, ...]] = {("id",), ("name",)}
   assert lookup_field_values(msg, expanded_paths_multiple) == {"test_id", "test_name"}
 
-  expanded_paths_repeated = {("tags",)}
+  expanded_paths_repeated: set[tuple[str, ...]] = {("tags",)}
   assert lookup_field_values(msg, expanded_paths_repeated) == {"tag1", "tag2"}
 
-  expanded_paths_nested_repeated = {("nested_subs", "sub_id")}
+  expanded_paths_nested_repeated: set[tuple[str, ...]] = {("nested_subs", "sub_id")}
   assert lookup_field_values(msg, expanded_paths_nested_repeated) == {"ns1", "ns2"}
 
-  expanded_paths_mixed_types = {("id",), ("value",)}
+  expanded_paths_mixed_types: set[tuple[str, ...]] = {("id",), ("value",)}
   assert lookup_field_values(msg, expanded_paths_mixed_types) == {"test_id", 123}

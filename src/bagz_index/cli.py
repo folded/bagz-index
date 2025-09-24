@@ -2,6 +2,7 @@ import pathlib
 
 import bagz
 import click
+import google.protobuf.json_format
 
 from bagz_index import core, hashtable, trigram
 from bagz_index.generate_logic import generate_index  # Import the new function
@@ -109,9 +110,9 @@ def dump(index_file: str) -> None:
         for record in hash_bucket.records:
           key_instance = key_proto_class()
           key_instance.ParseFromString(record.key)
+          key_str = google.protobuf.json_format.MessageToJson(key_instance, indent=None)
           print(
-            f"  Bucket {i}: Key: {key_instance.value}, "
-            f"Record IDs: {list(record.record_ids)}",
+            f"  Bucket {i}: Key: {key_str}, Record IDs: {list(record.record_ids)}",
           )
   elif isinstance(config, trigram.TrigramConfig):
     for i in range(len(bagz_reader) - 1):

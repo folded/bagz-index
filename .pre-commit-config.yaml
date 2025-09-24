@@ -35,6 +35,7 @@ repos:
     rev: v1.8.0
     hooks:
       - id: mypy
+        exclude: "/.*_pb2.py$"
         args:
           [
             --pretty,
@@ -43,6 +44,5 @@ repos:
             --ignore-missing-imports,
             --install-types,
             --non-interactive,
-            --exclude="/.*_pb2.py$",
           ]
         additional_dependencies: [types-PyYAML==6.0.4, types-toml]

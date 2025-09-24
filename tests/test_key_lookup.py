@@ -85,8 +85,8 @@ def key_lookup_config(
   key_config_class: type[core.KeyConfig],
   key_type_expectations: KeyTypeExpectations,
 ) -> core.KeyConfig:
-  if key_config_class == hashtable.HashBucketConfig:
-    return key_config_class(
+  if key_config_class is hashtable.HashBucketConfig:
+    return hashtable.HashBucketConfig(
       avg_bucket_size=0.9,
       key_proto_name=key_type_expectations.key_proto_name,
     )
@@ -106,14 +106,14 @@ def built_bagz_file(
   key_lookup_config: core.KeyConfig,
   key_values: Iterator[tuple[list[int], dict[str, Any]]],
 ) -> pathlib.Path:
-  writer = core.make_writer(key_lookup_config, core.SupportsKeyAddition)
+  writer = core.make_writer(key_lookup_config).as_key_writer
   key_proto_class = writer.key_proto
   for record_ids, key_value in key_values:
     key = key_proto_class(**key_value)
     writer.add(key, record_ids)
 
   bagz_path = tmp_path / "test.bagz"
-  writer.write(str(bagz_path))
+  writer.write(bagz_path)
   return bagz_path
 
 
@@ -121,7 +121,7 @@ def test_build(
   built_bagz_file: pathlib.Path,
   key_lookup_config: core.KeyConfig,
 ) -> None:
-  bag = bagz.Reader(str(built_bagz_file))
+  bag = bagz.Reader(built_bagz_file)
   assert len(bag) == 5
 
   config_from_bag = core.config_from_json(bag[len(bag) - 1].decode("utf-8"))
@@ -138,7 +138,7 @@ def test_index_reader_lookup(
   built_bagz_file: pathlib.Path,
   key_type_expectations: KeyTypeExpectations,
 ) -> None:
-  reader = core.make_reader(str(built_bagz_file), core.SupportsKeyLookup)
+  reader = core.make_reader(built_bagz_file).as_key_lookup
   key_proto_class = reader.key_proto
   for key, expected_record_ids in key_type_expectations.lookup_expectations:
     key_message = key_proto_class(value=key)
@@ -154,31 +154,31 @@ def test_hashtable_merge(
   all_key_values = list(key_type_expectations.key_values)
 
   # Index 1
-  writer1 = core.make_writer(key_lookup_config, core.SupportsKeyAddition)
+  writer1 = core.make_writer(key_lookup_config).as_key_writer
   key_proto_class1 = writer1.key_proto
   key_values1 = all_key_values[: len(all_key_values) // 2]
   for record_ids, key_value in key_values1:
     key = key_proto_class1(**key_value)
     writer1.add(key, record_ids)
   bagz_path1 = tmp_path / "test1.bagz"
-  writer1.write(str(bagz_path1))
+  writer1.write(bagz_path1)
 
   # Index 2
-  writer2 = core.make_writer(key_lookup_config, core.SupportsKeyAddition)
+  writer2 = core.make_writer(key_lookup_config).as_key_writer
   key_proto_class2 = writer2.key_proto
   key_values2 = all_key_values[len(all_key_values) // 2 :]
   for record_ids, key_value in key_values2:
     key = key_proto_class2(**key_value)
     writer2.add(key, record_ids)
   bagz_path2 = tmp_path / "test2.bagz"
-  writer2.write(str(bagz_path2))
+  writer2.write(bagz_path2)
 
   # Merge them
   merged_path = tmp_path / "merged.bagz"
-  core.merge_indices([str(bagz_path1), str(bagz_path2)], str(merged_path))
+  core.merge_indices([bagz_path1, bagz_path2], merged_path)
 
   # Test the merged index
-  reader = core.make_reader(str(merged_path), core.SupportsKeyLookup)
+  reader = core.make_reader(merged_path).as_key_lookup
   key_proto_class = reader.key_proto
   for key, expected_record_ids in key_type_expectations.lookup_expectations:
     key_message = key_proto_class(value=key)
