@@ -17,15 +17,19 @@ source = { editable = "." }
 dependencies = [
     { name = "bagz" },
     { name = "blake3" },
-    { name = "click" },
     { name = "protobuf" },
     { name = "pytest" },
     { name = "types-protobuf" },
 ]
 
+[package.optional-dependencies]
+cli = [
+    { name = "click" },
+    { name = "grpcio-tools" },
+]
+
 [package.dev-dependencies]
 dev = [
-    { name = "grpcio-tools" },
     { name = "mypy" },
     { name = "ruff" },
 ]
@@ -34,15 +38,16 @@ dev = [
 requires-dist = [
     { name = "bagz", path = "../bagz/dist/bagz-0.2.0-cp311-cp311-macosx_15_0_arm64.whl" },
     { name = "blake3" },
-    { name = "click" },
+    { name = "click", marker = "extra == 'cli'" },
+    { name = "grpcio-tools", marker = "extra == 'cli'" },
     { name = "protobuf", specifier = ">=6.31.2" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "types-protobuf", specifier = ">=6.30.2.20250822" },
 ]
+provides-extras = ["cli"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "grpcio-tools" },
     { name = "mypy" },
     { name = "ruff", specifier = ">=0.12.0" },
 ]
